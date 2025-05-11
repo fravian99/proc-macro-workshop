@@ -143,44 +143,74 @@ fn builder_attrs<'a, 'b>(
     field: &'a Field,
     function: impl Fn(&'a Field, proc_macro2::Ident) -> proc_macro2::TokenStream,
 ) -> Option<proc_macro2::TokenStream> {
-    let values: Vec<_> = attrs_each(&field.attrs)
-        .map(|ident| function(field, ident))
+    let values: Vec<_> = field
+        .attrs
+        .iter()
+        .filter(|a| parse_attr_builder(a))
         .collect();
     if values.is_empty() {
-        None
-    } else {
-        let q = quote! {
-            #(#values)*
-        };
-        Some(q)
+        return None;
     }
+    let values: Vec<_> = values
+        .iter()
+        .filter_map(|a| parse_attrs_each(a))
+        .map(|a| match a {
+            Ok(ident) => function(field, ident),
+            Err(err) => err.to_compile_error(),
+        })
+        .collect();
+    let q = if values.is_empty() {
+        proc_macro2::TokenStream::new()
+    } else {
+        quote! {
+            #(#values)*
+        }
+    };
+    Some(q)
 }
 
-fn attrs_each(attrs: &[syn::Attribute]) -> impl Iterator<Item = proc_macro2::Ident> + '_ {
-    attrs
+fn attrs_each(attrs_builder: &[syn::Attribute]) -> impl Iterator<Item = proc_macro2::Ident> + '_ {
+    attrs_builder
         .iter()
-        .filter(|attr| attr.path().is_ident("builder"))
-        .filter_map(|syn::Attribute { meta, .. }| {
-            if let syn::Meta::List(list) = meta {
-                list.parse_args::<syn::MetaNameValue>().ok()
-            } else {
-                None
-            }
-        })
-        .filter(|attr| attr.path.is_ident("each"))
-        .filter_map(|attr| {
-            if let syn::Expr::Lit(value) = attr.value {
-                if let syn::Lit::Str(value) = value.lit {
-                    return Some(value);
-                }
-            }
-            None
-        })
-        .map(|value| {
-            let value = value.value();
-            syn::Ident::new(&value, proc_macro2::Span::call_site())
+        .filter(|a| parse_attr_builder(a))
+        .filter_map(|a| match parse_attrs_each(a) {
+            Some(Ok(ident)) => Some(ident),
+            _ => None,
         })
 }
+
+fn parse_attr_builder(attr: &syn::Attribute) -> bool {
+    attr.path().is_ident("builder")
+}
+
+fn parse_attrs_each(attr: &syn::Attribute) -> Option<Result<syn::Ident, syn::Error>> {
+    if !attr.path().is_ident("builder") {
+        return None;
+    }
+    let syn::Attribute { meta, .. } = attr;
+    let args = if let syn::Meta::List(list) = meta {
+        list.parse_args::<syn::MetaNameValue>().ok()
+    } else {
+        None
+    };
+
+    if let Some(args) = args {
+        if args.path.is_ident("each") {
+            if let syn::Expr::Lit(value) = args.value {
+                if let syn::Lit::Str(value) = value.lit {
+                    let value = value.value();
+                    let ident = syn::Ident::new(&value, proc_macro2::Span::call_site());
+                    return Some(Ok(ident));
+                }
+            }
+        }
+    }
+    Some(Err(syn::Error::new_spanned(
+        meta,
+        "expected `builder(each = \"...\")`",
+    )))
+}
+
 fn unwrap_optional(field_type: &syn::Type) -> Option<&syn::Type> {
     unwrap_type(field_type, "Option")
 }
