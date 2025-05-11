@@ -28,38 +28,10 @@ pub fn derive(input: TokenStream) -> TokenStream {
             .map(|Field { ident, .. }| quote! {#ident})
             .collect();
 
-        let setters = fields.iter().map(|Field { ident, ty, .. }| {
-            let field_type = unwrap_optional(ty).or(Some(ty));
-            quote! {
-                fn #ident(&mut self, #ident: #field_type) -> &mut Self {
-                    self.#ident = Some(#ident);
-                    self
-                }
-            }
-        });
-
-        let parameters_dec = fields.iter().map(|Field { ident, ty, .. }| {
-            let field_type = unwrap_optional(ty).or(Some(ty));
-            quote! {
-                #ident : Option<#field_type>
-            }
-        });
-
-        let parameters_check = fields.iter().map(|Field { ident, ty, .. }| {
-            if unwrap_optional(ty).is_some() {
-                quote! {
-                    let #ident = cloned.#ident;
-                }
-            } else {
-                let string_ident = ident.clone().map(|ident| ident.to_string());
-                quote! {
-                    let #ident = match cloned.#ident {
-                        Some(#ident) => Ok(#ident),
-                        None => Err(#string_ident)
-                    }?;
-                }
-            }
-        });
+        let setters = fields.iter().map(|a| setter(a));
+        let parameters_dec = fields.iter().map(|a| parameter_declaration(a));
+        let parameters_init = fields.iter().map(|a| parameter_init(a));
+        let parameters_check = fields.iter().map(|a| parameter_check(a));
 
         let token_stream = proc_macro::TokenStream::from(quote! {
             #[derive(Clone)]
@@ -80,7 +52,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
             impl #name {
                 fn builder() -> #builder_name {
                     #builder_name {
-                        #(#token_ident: None,)*
+                        #(#parameters_init, )*
                     }
                 }
             }
@@ -92,6 +64,123 @@ pub fn derive(input: TokenStream) -> TokenStream {
     TokenStream::new()
 }
 
+fn setter(field: &Field) -> proc_macro2::TokenStream {
+    let Field { ident, ty, .. } = field;
+    let function = move |field: &Field, value: proc_macro2::Ident| {
+        let Field { ident, ty, .. } = &field;
+        let field_type = unwrap_vec(ty).unwrap_or(ty);
+        quote! {
+            fn #value(&mut self, #value: #field_type) -> &mut Self {
+                self.#ident.push(#value);
+                self
+            }
+        }
+    };
+    let token_stream = builder_attrs(field, function);
+    if let Some(token_stream) = token_stream {
+        return token_stream;
+    }
+    let field_type = unwrap_optional(ty).unwrap_or(ty);
+    quote! {
+        fn #ident(&mut self, #ident: #field_type) -> &mut Self {
+            self.#ident = Some(#ident);
+            self
+        }
+    }
+}
+
+fn parameter_init(Field { attrs, ident, .. }: &Field) -> proc_macro2::TokenStream {
+    if attrs_each(attrs).next().is_some() {
+        quote! {
+            #ident: Vec::new()
+        }
+    } else {
+        quote! {
+            #ident : None
+        }
+    }
+}
+
+fn parameter_declaration(
+    Field {
+        attrs, ident, ty, ..
+    }: &Field,
+) -> proc_macro2::TokenStream {
+    if attrs_each(attrs).next().is_some() {
+        let field_type = unwrap_vec(ty).unwrap_or(ty);
+        quote! {
+            #ident : Vec<#field_type>
+        }
+    } else {
+        let field_type = unwrap_optional(ty).unwrap_or(ty);
+        quote! {
+            #ident : Option<#field_type>
+        }
+    }
+}
+
+fn parameter_check(
+    Field {
+        attrs, ident, ty, ..
+    }: &Field,
+) -> proc_macro2::TokenStream {
+    if unwrap_optional(ty).is_some() || attrs_each(attrs).next().is_some() {
+        quote! {
+            let #ident = cloned.#ident;
+        }
+    } else {
+        let string_ident = ident.as_ref().map(|ident| ident.to_string());
+        quote! {
+            let #ident = match cloned.#ident {
+                Some(#ident) => Ok(#ident),
+                None => Err(#string_ident)
+            }?;
+        }
+    }
+}
+
+fn builder_attrs<'a, 'b>(
+    field: &'a Field,
+    function: impl Fn(&'a Field, proc_macro2::Ident) -> proc_macro2::TokenStream,
+) -> Option<proc_macro2::TokenStream> {
+    let values: Vec<_> = attrs_each(&field.attrs)
+        .map(|ident| function(field, ident))
+        .collect();
+    if values.is_empty() {
+        None
+    } else {
+        let q = quote! {
+            #(#values)*
+        };
+        Some(q)
+    }
+}
+
+fn attrs_each(attrs: &[syn::Attribute]) -> impl Iterator<Item = proc_macro2::Ident> + '_ {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("builder"))
+        .filter_map(|syn::Attribute { meta, .. }| {
+            if let syn::Meta::List(list) = meta {
+                list.parse_args::<syn::MetaNameValue>().ok()
+            } else {
+                None
+            }
+        })
+        .filter(|attr| attr.path.is_ident("each"))
+        .filter_map(|attr| {
+            if let syn::Expr::Lit(value) = attr.value {
+                if let syn::Lit::Str(value) = value.lit {
+                    return Some(value);
+                }
+            }
+            None
+        })
+        .map(|value| {
+            let value = value.value();
+            syn::Ident::new(&value, proc_macro2::Span::call_site())
+        })
+}
 fn unwrap_optional(field_type: &syn::Type) -> Option<&syn::Type> {
     let segments = match field_type {
         syn::Type::Path(syn::TypePath {
@@ -106,6 +195,31 @@ fn unwrap_optional(field_type: &syn::Type) -> Option<&syn::Type> {
             arguments:
                 syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }),
         } if ident == "Option" && args.len() == 1 => args,
+        _ => return None,
+    };
+
+    let ty = match &args[0] {
+        syn::GenericArgument::Type(t) => t,
+        _ => return None,
+    };
+
+    Some(ty)
+}
+
+fn unwrap_vec(field_type: &syn::Type) -> Option<&syn::Type> {
+    let segments = match field_type {
+        syn::Type::Path(syn::TypePath {
+            path: syn::Path { segments, .. },
+            ..
+        }) if segments.len() == 1 => segments,
+        _ => return None,
+    };
+    let args = match &segments[0] {
+        syn::PathSegment {
+            ident,
+            arguments:
+                syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }),
+        } if ident == "Vec" && args.len() == 1 => args,
         _ => return None,
     };
 
