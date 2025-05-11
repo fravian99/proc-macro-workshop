@@ -5,7 +5,6 @@ use syn::{parse_macro_input, Data, DeriveInput, Field, Fields};
 
 #[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
-    //print!("{:?}", input);
     let input = parse_macro_input!(input as DeriveInput);
 
     // ident is the name of the type
