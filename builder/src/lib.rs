@@ -90,7 +90,7 @@ fn setter(field: &Field) -> proc_macro2::TokenStream {
 }
 
 fn parameter_init(Field { attrs, ident, .. }: &Field) -> proc_macro2::TokenStream {
-    if attrs_each(attrs).next().is_some() {
+    if attrs_each(attrs) {
         quote! {
             #ident: Vec::new()
         }
@@ -106,7 +106,7 @@ fn parameter_declaration(
         attrs, ident, ty, ..
     }: &Field,
 ) -> proc_macro2::TokenStream {
-    if attrs_each(attrs).next().is_some() {
+    if attrs_each(attrs) {
         let field_type = unwrap_vec(ty).unwrap_or(ty);
         quote! {
             #ident : std::vec::Vec<#field_type>
@@ -124,7 +124,7 @@ fn parameter_check(
         attrs, ident, ty, ..
     }: &Field,
 ) -> proc_macro2::TokenStream {
-    if unwrap_optional(ty).is_some() || attrs_each(attrs).next().is_some() {
+    if unwrap_optional(ty).is_some() || attrs_each(attrs) {
         quote! {
             let #ident = cloned.#ident;
         }
@@ -146,43 +146,34 @@ fn builder_attrs<'a, 'b>(
     let values: Vec<_> = field
         .attrs
         .iter()
-        .filter(|a| parse_attr_builder(a))
-        .collect();
-    if values.is_empty() {
-        return None;
-    }
-    let values: Vec<_> = values
-        .iter()
-        .filter_map(|a| parse_attrs_each(a))
-        .map(|a| match a {
-            Ok(ident) => function(field, ident),
-            Err(err) => err.to_compile_error(),
+        .filter_map(|a| match parse_attrs_each(a) {
+            Some(Ok(ident)) => Some(function(field, ident)),
+            Some(Err(err)) => Some(err.to_compile_error()),
+            _ => None,
         })
         .collect();
-    let q = if values.is_empty() {
-        proc_macro2::TokenStream::new()
-    } else {
-        quote! {
+    if !values.is_empty() {
+        Some(quote! {
             #(#values)*
-        }
-    };
-    Some(q)
+        })
+    } else {
+        None
+    }
 }
 
-fn attrs_each(attrs_builder: &[syn::Attribute]) -> impl Iterator<Item = proc_macro2::Ident> + '_ {
+fn attrs_each(attrs_builder: &[syn::Attribute]) -> bool {
     attrs_builder
         .iter()
-        .filter(|a| parse_attr_builder(a))
         .filter_map(|a| match parse_attrs_each(a) {
             Some(Ok(ident)) => Some(ident),
             _ => None,
         })
+        .next()
+        .is_some()
 }
-
-fn parse_attr_builder(attr: &syn::Attribute) -> bool {
-    attr.path().is_ident("builder")
-}
-
+/// Return None if not a builder attribute
+/// Return Some(Err) if it is an builder attribute and not a valid each attribute
+/// Return Some(Ok(ident)) if it is an builder attribute and a valid each attribute
 fn parse_attrs_each(attr: &syn::Attribute) -> Option<Result<syn::Ident, syn::Error>> {
     if !attr.path().is_ident("builder") {
         return None;
