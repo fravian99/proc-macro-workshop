@@ -42,7 +42,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
             impl #builder_name {
                 #(#setters)*
 
-                fn build(&mut self) -> Result<#name, Box<dyn std::error::Error>> {
+                fn build(&mut self) -> std::result::Result<#name, std::boxed::Box<dyn std::error::Error>> {
                     let cloned = self.clone();
                     #(#parameters_check)*
                     Ok(#name { #(#token_ident,)* })
@@ -109,12 +109,12 @@ fn parameter_declaration(
     if attrs_each(attrs).next().is_some() {
         let field_type = unwrap_vec(ty).unwrap_or(ty);
         quote! {
-            #ident : Vec<#field_type>
+            #ident : std::vec::Vec<#field_type>
         }
     } else {
         let field_type = unwrap_optional(ty).unwrap_or(ty);
         quote! {
-            #ident : Option<#field_type>
+            #ident : std::option::Option<#field_type>
         }
     }
 }
