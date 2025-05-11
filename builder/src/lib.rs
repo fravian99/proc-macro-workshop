@@ -182,31 +182,14 @@ fn attrs_each(attrs: &[syn::Attribute]) -> impl Iterator<Item = proc_macro2::Ide
         })
 }
 fn unwrap_optional(field_type: &syn::Type) -> Option<&syn::Type> {
-    let segments = match field_type {
-        syn::Type::Path(syn::TypePath {
-            path: syn::Path { segments, .. },
-            ..
-        }) if segments.len() == 1 => segments,
-        _ => return None,
-    };
-    let args = match &segments[0] {
-        syn::PathSegment {
-            ident,
-            arguments:
-                syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }),
-        } if ident == "Option" && args.len() == 1 => args,
-        _ => return None,
-    };
-
-    let ty = match &args[0] {
-        syn::GenericArgument::Type(t) => t,
-        _ => return None,
-    };
-
-    Some(ty)
+    unwrap_type(field_type, "Option")
 }
 
 fn unwrap_vec(field_type: &syn::Type) -> Option<&syn::Type> {
+    unwrap_type(field_type, "Vec")
+}
+
+fn unwrap_type<'a>(field_type: &'a syn::Type, outer_type: &'a str) -> Option<&'a syn::Type> {
     let segments = match field_type {
         syn::Type::Path(syn::TypePath {
             path: syn::Path { segments, .. },
@@ -219,7 +202,7 @@ fn unwrap_vec(field_type: &syn::Type) -> Option<&syn::Type> {
             ident,
             arguments:
                 syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }),
-        } if ident == "Vec" && args.len() == 1 => args,
+        } if ident == outer_type && args.len() == 1 => args,
         _ => return None,
     };
 
