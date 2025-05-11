@@ -10,8 +10,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     // ident is the name of the type
     let name = &input.ident;
-    println!(">Struct name: {}", name);
-
     let builder_name = format_ident!("{}Builder", name);
 
     let data = &input.data;
@@ -57,8 +55,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 }
             }
         });
-
-        println!("> TokenStream: {}", token_stream);
         return token_stream;
     }
     TokenStream::new()
