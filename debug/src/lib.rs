@@ -1,12 +1,16 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Data, DeriveInput, Field, Fields};
+use syn::{parse_macro_input, parse_quote, Data, DeriveInput, Field, Fields};
 
 #[proc_macro_derive(CustomDebug, attributes(debug))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    let ident = &input.ident;
-    let data = &input.data;
+    let ident = input.ident;
+    let data = input.data;
+    let generics = input.generics;
+
+    let generics = add_trait_bounds(generics);
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let ident_string = ident.to_string();
 
@@ -20,7 +24,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
         let debug_struct_params = fields.iter().map(|a| debug_struct_param(a));
 
         TokenStream::from(quote! {
-            impl std::fmt::Debug for #ident {
+            impl #impl_generics std::fmt::Debug for #ident #ty_generics #where_clause  {
                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                     f.debug_struct(#ident_string)
                         #(#debug_struct_params)*
@@ -90,4 +94,13 @@ fn parse_debug_attrs(attr: &syn::Attribute) -> Option<String> {
         }
     }
     None
+}
+
+fn add_trait_bounds(mut generics: syn::Generics) -> syn::Generics {
+    for param in &mut generics.params {
+        if let syn::GenericParam::Type(ref mut type_param) = *param {
+            type_param.bounds.push(parse_quote!(std::fmt::Debug));
+        }
+    }
+    generics
 }
