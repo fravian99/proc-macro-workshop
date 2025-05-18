@@ -9,9 +9,6 @@ pub fn derive(input: TokenStream) -> TokenStream {
     let data = input.data;
     let generics = input.generics;
 
-    let generics = add_trait_bounds(generics);
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-
     let ident_string = ident.to_string();
 
     let token_stream = if let Data::Struct(data) = data {
@@ -22,6 +19,9 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
         let fields: Vec<&Field> = fields.collect();
         let debug_struct_params = fields.iter().map(|a| debug_struct_param(a));
+
+        let generics_with_debug = add_trait_bounds(generics.clone(), fields.iter().cloned());
+        let (impl_generics, ty_generics, where_clause) = generics_with_debug.split_for_impl();
 
         TokenStream::from(quote! {
             impl #impl_generics std::fmt::Debug for #ident #ty_generics #where_clause  {
@@ -96,10 +96,17 @@ fn parse_debug_attrs(attr: &syn::Attribute) -> Option<String> {
     None
 }
 
-fn add_trait_bounds(mut generics: syn::Generics) -> syn::Generics {
+fn add_trait_bounds<'a>(
+    mut generics: syn::Generics,
+    mut fields: impl Iterator<Item = &'a Field>,
+) -> syn::Generics {
     for param in &mut generics.params {
         if let syn::GenericParam::Type(ref mut type_param) = *param {
-            type_param.bounds.push(parse_quote!(std::fmt::Debug));
+            let ident = &type_param.ident;
+            let is_phantom = parse_quote!(PhantomData<#ident>);
+            if !fields.any(|field| field.ty == is_phantom) {
+                type_param.bounds.push(parse_quote!(std::fmt::Debug));
+            }
         }
     }
     generics
